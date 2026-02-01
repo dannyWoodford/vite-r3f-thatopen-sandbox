@@ -1,7 +1,6 @@
-import { OrbitControls } from '@react-three/drei'
+import { OrbitControls, Stats } from '@react-three/drei'
 import { useFrame } from '@react-three/fiber'
 import { useControls } from 'leva'
-import { Perf } from 'r3f-perf'
 import { useRef } from 'react'
 import { BoxGeometry, Mesh, MeshBasicMaterial } from 'three'
 import { Cube } from './components/Cube'
@@ -10,7 +9,7 @@ import { Sphere } from './components/Sphere'
 
 function Scene() {
   const { performance } = useControls('Monitoring', {
-    performance: false,
+    performance: true,
   })
 
   const { animate } = useControls('Cube', {
@@ -27,7 +26,7 @@ function Scene() {
 
   return (
     <>
-      {performance && <Perf position='top-left' />}
+      {performance && <Stats />}
 
       <OrbitControls makeDefault />
 
