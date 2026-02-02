@@ -1,8 +1,15 @@
 import { useFrame, useThree } from '@react-three/fiber'
+import { Outlines } from '@react-three/drei'
 import * as OBC from '@thatopen/components'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Object3D } from 'three'
-import { Vector2 } from 'three'
+import {
+  BufferAttribute,
+  BufferGeometry,
+  Float32BufferAttribute,
+  Matrix4,
+  Vector2,
+} from 'three'
 
 const WORKER_URL = 'https://thatopen.github.io/engine_fragment/resources/worker.mjs'
 const FRAGMENT_URL =
@@ -16,6 +23,8 @@ type ThatOpenState = {
 }
 
 type ModelEntry = { modelId: string; object: Object3D }
+type Selection = { modelId: string; localId: number; itemId: number | null } | null
+type SelectionPart = { geometry: BufferGeometry; matrix: Matrix4 }
 
 function useThatOpenFragments(fragmentUrl: string) {
   const { camera } = useThree()
@@ -124,6 +133,8 @@ export function ThatOpenFragment() {
   const { gl, camera } = useThree()
   const { models, stateRef } = useThatOpenFragments(FRAGMENT_URL)
   const raycastInFlightRef = useRef(false)
+  const [selection, setSelection] = useState<Selection>(null)
+  const [selectionParts, setSelectionParts] = useState<SelectionPart[]>([])
 
   useEffect(() => {
     const el = gl.domElement
@@ -163,6 +174,17 @@ export function ThatOpenFragment() {
             if (hits[i].result.distance < closest.result.distance) closest = hits[i]
           }
 
+          const localId = closest.result?.localId
+          if (typeof localId === 'number') {
+            setSelection({
+              modelId: closest.modelId,
+              localId,
+              itemId: typeof closest.result?.itemId === 'number' ? closest.result.itemId : null,
+            })
+          } else {
+            setSelection(null)
+          }
+
           // eslint-disable-next-line no-console
           console.log('Fragment raycast hit', {
             modelId: closest.modelId,
@@ -190,6 +212,73 @@ export function ThatOpenFragment() {
     return () => el.removeEventListener('pointerdown', onPointerDown)
   }, [gl, camera, models])
 
+  useEffect(() => {
+    const sel = selection
+    const state = stateRef.current
+    if (!sel || !state) return
+
+    let cancelled = false
+    const toDispose: BufferGeometry[] = []
+
+    const toMatrix4 = (t: unknown) => {
+      if (!t) return new Matrix4()
+      if (t instanceof Matrix4) return t.clone()
+      const anyT = t as any
+      if (Array.isArray(anyT) && anyT.length >= 16) return new Matrix4().fromArray(anyT)
+      if (ArrayBuffer.isView(anyT)) {
+        const arr = anyT as unknown as ArrayLike<number>
+        if (arr.length >= 16) return new Matrix4().fromArray(Array.from(arr))
+      }
+      if (anyT.elements && Array.isArray(anyT.elements) && anyT.elements.length >= 16) {
+        return new Matrix4().fromArray(anyT.elements)
+      }
+      return new Matrix4()
+    }
+
+    const run = async () => {
+      const model = state.fragments.list.get(sel.modelId)
+      if (!model) return
+
+      // LOD GEOMETRY = 0 (const enum CurrentLod.GEOMETRY)
+      const data = await model.getItemsGeometry([sel.localId], 0 as any)
+      if (cancelled) return
+
+      const meshDatas = data?.[0] ?? []
+      const nextParts: SelectionPart[] = []
+
+      for (const md of meshDatas) {
+        if (!md.positions || md.positions.length === 0) continue
+
+        const geometry = new BufferGeometry()
+        toDispose.push(geometry)
+
+        const positions =
+          md.positions instanceof Float64Array ? new Float32Array(md.positions) : md.positions
+        geometry.setAttribute('position', new Float32BufferAttribute(positions as any, 3))
+
+        if (md.indices && md.indices.length > 0) {
+          geometry.setIndex(new BufferAttribute(md.indices as any, 1))
+        }
+
+        geometry.computeBoundingSphere()
+
+        nextParts.push({
+          geometry,
+          matrix: toMatrix4((md as any).transform),
+        })
+      }
+
+      setSelectionParts(nextParts)
+    }
+
+    run().catch(console.error)
+
+    return () => {
+      cancelled = true
+      for (const g of toDispose) g.dispose()
+    }
+  }, [selection, stateRef])
+
   return (
     <>
       {models.map(({ modelId, object }) => (
@@ -198,6 +287,20 @@ export function ThatOpenFragment() {
           key={modelId}
           object={object}
         />
+      ))}
+
+      {/* Outline overlay for the currently selected element */}
+      {selectionParts.map((part, i) => (
+        <mesh
+          key={`${selection?.modelId ?? 'model'}:${selection?.localId ?? 'none'}:${i}`}
+          geometry={part.geometry}
+          matrix={part.matrix}
+          matrixAutoUpdate={false}
+          renderOrder={999}
+        >
+          <meshBasicMaterial transparent opacity={0} depthWrite={true} />
+          <Outlines thickness={2} color='white'  />
+        </mesh>
       ))}
     </>
   )
