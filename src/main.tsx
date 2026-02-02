@@ -30,8 +30,8 @@ function Main() {
         camera={{
           fov: 55,
           near: 0.1,
-          far: 2000,
-          position: [30, 20, 90],
+          far: 10000,
+          position: [93.8, 22.3, 11.2],
         }}
         shadows
       >

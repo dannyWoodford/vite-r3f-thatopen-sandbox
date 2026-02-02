@@ -77,7 +77,7 @@ const settings = {
   interiorColumnWidth: 0.25,
   interiorColumnLength: 0.25,
   floorThickness: 0.3,
-  numberOfFloors: 10,
+  numberOfFloors: 10,  
   clipPlaneHeight: 63.5,
   windowHeight: 2,
   windowWidth: 1,
