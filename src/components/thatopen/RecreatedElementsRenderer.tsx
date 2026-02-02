@@ -1,6 +1,8 @@
 import * as OBC from '@thatopen/components'
 import { useControls } from 'leva'
-import { useEffect, useRef, useState } from 'react'
+import { Outlines } from '@react-three/drei'
+import { useThree, type ThreeEvent } from '@react-three/fiber'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   BufferAttribute,
   BufferGeometry,
@@ -10,6 +12,7 @@ import {
   DoubleSide,
   MeshLambertMaterial,
   Mesh as ThreeMesh,
+  Vector3,
 } from 'three'
 import { toMatrix4 } from './toMatrix4'
 
@@ -22,12 +25,35 @@ export function RecreatedElementsRenderer({
     batchSize: { value: 200, min: 50, max: 2000, step: 50 },
   })
 
+  const { raycaster } = useThree()
   const [root, setRoot] = useState<Group | null>(null)
+  const [selected, setSelected] = useState<{ geometry: BufferGeometry; matrixWorld: any } | null>(
+    null
+  )
+  const clickCatcherRef = useRef<any>(null)
+  const clickCatcherGeometry = useMemo(() => new BufferGeometry(), [])
+  const tmpPoint = useMemo(() => new Vector3(), [])
+
   // Dispose geometries + created materials.
   const disposablesRef = useRef<{
     geometries: BufferGeometry[]
     materials: MeshLambertMaterial[]
   } | null>(null)
+
+  const handlePointerDown = (e: ThreeEvent<PointerEvent>) => {
+    if (!root) return
+    // Use R3F's normalized pointer coords and camera to raycast against recreated meshes.
+    raycaster.setFromCamera(e.pointer, e.camera)
+    const hits = raycaster.intersectObject(root, true)
+    if (hits.length === 0) {
+      setSelected(null)
+      return
+    }
+    const hitObj: any = hits[0].object
+    if (!hitObj?.geometry) return
+    hitObj.updateWorldMatrix(true, false)
+    setSelected({ geometry: hitObj.geometry, matrixWorld: hitObj.matrixWorld.clone() })
+  }
 
   useEffect(() => {
     if (!fragments) return
@@ -204,16 +230,49 @@ export function RecreatedElementsRenderer({
       }
       disposablesRef.current = null
       setRoot(null)
+      setSelected(null)
     }
   }, [batchSize, fragments])
 
   if (!root) return null
 
   return (
-    <primitive
-      // eslint-disable-next-line react/no-unknown-property
-      object={root}
-    />
+    <>
+      {/* Click-catcher for R3F events (Recreated selection) */}
+      <mesh
+        // eslint-disable-next-line react/no-unknown-property
+        ref={clickCatcherRef}
+        geometry={clickCatcherGeometry}
+        frustumCulled={false}
+        // eslint-disable-next-line react/no-unknown-property
+        raycast={(raycaster, intersects) => {
+          const obj = clickCatcherRef.current as any
+          if (!obj) return
+          tmpPoint.copy(raycaster.ray.direction).multiplyScalar(1).add(raycaster.ray.origin)
+          intersects.push({ distance: 0, point: tmpPoint.clone(), object: obj })
+        }}
+        onPointerDown={handlePointerDown}
+      >
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} depthTest={false} />
+      </mesh>
+
+      <primitive
+        // eslint-disable-next-line react/no-unknown-property
+        object={root}
+      />
+
+      {selected && (
+        <mesh
+          geometry={selected.geometry}
+          matrix={selected.matrixWorld}
+          matrixAutoUpdate={false}
+          renderOrder={999}
+        >
+          <meshBasicMaterial transparent opacity={0} depthWrite />
+          <Outlines thickness={0.02} color='white' screenspace angle={0} />
+        </mesh>
+      )}
+    </>
   )
 }
 
