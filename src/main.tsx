@@ -24,16 +24,14 @@ function Main() {
       />
       <Canvas
         dpr={[1, 2]}
-        gl={{
-          antialias: true,
-          toneMapping: ACESFilmicToneMapping,
-          outputColorSpace: SRGBColorSpace,
-        }}
+        // gl={{
+        //   antialias: true,
+        // }}
         camera={{
           fov: 55,
           near: 0.1,
-          far: 200,
-          position: [3, 2, 9],
+          far: 2000,
+          position: [30, 20, 90],
         }}
         shadows
       >

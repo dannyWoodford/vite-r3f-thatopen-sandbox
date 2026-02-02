@@ -3,9 +3,7 @@ import { useFrame } from '@react-three/fiber'
 import { useControls } from 'leva'
 import { useRef } from 'react'
 import { BoxGeometry, Mesh, MeshBasicMaterial } from 'three'
-import { Cube } from './components/Cube'
-import { Plane } from './components/Plane'
-import { Sphere } from './components/Sphere'
+import { ThatOpenFragment } from './components/ThatOpenFragment'
 
 function Scene() {
   const { performance } = useControls('Monitoring', {
@@ -28,6 +26,7 @@ function Scene() {
     <>
       {performance && <Stats />}
 
+      <ThatOpenFragment />
       <OrbitControls makeDefault />
 
       <directionalLight
@@ -37,10 +36,6 @@ function Scene() {
         shadow-mapSize={[1024 * 2, 1024 * 2]}
       />
       <ambientLight intensity={0.2} />
-
-      <Cube ref={cubeRef} />
-      <Sphere />
-      <Plane />
     </>
   )
 }
