@@ -1,4 +1,6 @@
 import * as OBC from '@thatopen/components'
+import { Outlines, Bvh } from '@react-three/drei'
+import type { ThreeEvent } from '@react-three/fiber'
 import { button, useControls } from 'leva'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -104,8 +106,12 @@ function buildGeometryFromMeshData(meshData: any, disposables: Disposables): Buf
   return geometry
 }
 
-function InstancedBucket({ bucket }: { bucket: Bucket }) {
+type Pick = { geometry: BufferGeometry; matrixWorld: Matrix4 }
+
+function InstancedBucket({ bucket, onPick }: { bucket: Bucket; onPick: (pick: Pick) => void }) {
   const ref = useRef<InstancedMesh | null>(null)
+  const tmpInstanceMatrix = useMemo(() => new Matrix4(), [])
+  const tmpWorldMatrix = useMemo(() => new Matrix4(), [])
 
   // Keep constructor args stable; changing args causes R3F to recreate the underlying Three object.
   const args = useMemo(
@@ -131,6 +137,15 @@ function InstancedBucket({ bucket }: { bucket: Bucket }) {
       args={args}
       frustumCulled={false}
       name={`instanced:${bucket.bucketKey}`}
+      onPointerDown={(e) => {
+        e.stopPropagation()
+        const mesh = ref.current
+        const instanceId = (e as any)?.instanceId
+        if (!mesh || typeof instanceId !== 'number') return
+        mesh.getMatrixAt(instanceId, tmpInstanceMatrix)
+        tmpWorldMatrix.multiplyMatrices(mesh.matrixWorld, tmpInstanceMatrix)
+        onPick({ geometry: mesh.geometry as BufferGeometry, matrixWorld: tmpWorldMatrix.clone() })
+      }}
     />
   )
 }
@@ -138,9 +153,11 @@ function InstancedBucket({ bucket }: { bucket: Bucket }) {
 function UninstancedBucketMeshes({
   bucket,
   materialMode,
+  onPick,
 }: {
   bucket: Bucket
   materialMode: 'original' | 'red'
+  onPick: (pick: Pick) => void
 }) {
   const redMaterial = useMemo(
     () =>
@@ -171,6 +188,13 @@ function UninstancedBucketMeshes({
           matrixAutoUpdate={false}
           frustumCulled={false}
           name={`mesh:${bucket.bucketKey}:${i}`}
+          onPointerDown={(e) => {
+            e.stopPropagation()
+            const obj: any = e.object
+            if (!obj?.geometry) return
+            obj.updateWorldMatrix?.(true, false)
+            onPick({ geometry: obj.geometry as BufferGeometry, matrixWorld: obj.matrixWorld.clone() })
+          }}
         />
       ))}
     </>
@@ -204,6 +228,7 @@ export function InstancedRecreatedElementsRenderer({
 
   const batchSize = 200
   const [build, setBuild] = useState<{ buckets: Bucket[]; disposables: Disposables } | null>(null)
+  const [selected, setSelected] = useState<Pick | null>(null)
 
   const buildRef = useRef(build)
   buildRef.current = build
@@ -335,18 +360,35 @@ export function InstancedRecreatedElementsRenderer({
   const uninstancedBuckets = buckets.filter((b) => b.matrices.length <= t)
 
   return (
-    <group name='instanced-recreated-root'>
-      {instancedBuckets.map((b) => (
-        <InstancedBucket key={b.bucketKey} bucket={b} />
-      ))}
-      {uninstancedBuckets.map((b) => (
-        <UninstancedBucketMeshes
-          key={`${b.bucketKey}:uninstanced`}
-          bucket={b}
-          materialMode={uninstancedMaterial as 'original' | 'red'}
-        />
-      ))}
-    </group>
+    <>
+      <Bvh firstHitOnly>
+        <group name='instanced-recreated-root'>
+          {instancedBuckets.map((b) => (
+            <InstancedBucket key={b.bucketKey} bucket={b} onPick={setSelected} />
+          ))}
+          {uninstancedBuckets.map((b) => (
+            <UninstancedBucketMeshes
+            key={`${b.bucketKey}:uninstanced`}
+            bucket={b}
+            materialMode={uninstancedMaterial as 'original' | 'red'}
+            onPick={setSelected}
+            />
+          ))}
+        </group>
+      </Bvh>
+
+      {selected && (
+        <mesh
+          geometry={selected.geometry}
+          matrix={selected.matrixWorld}
+          matrixAutoUpdate={false}
+          renderOrder={999}
+        >
+          <meshBasicMaterial transparent opacity={0} depthWrite />
+          <Outlines thickness={0.2} color='white' screenspace angle={0} />
+        </mesh>
+      )}
+    </>
   )
 }
 
