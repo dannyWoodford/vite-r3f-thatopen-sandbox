@@ -384,8 +384,8 @@ export function InstancedRecreatedElementsRenderer({
           matrixAutoUpdate={false}
           renderOrder={999}
         >
-          <meshBasicMaterial transparent opacity={0} depthWrite />
-          <Outlines thickness={0.2} color='white' screenspace angle={0} />
+          <meshBasicMaterial transparent opacity={0} depthWrite={false} depthTest={false} />
+          <Outlines thickness={2} color='white' />
         </mesh>
       )}
     </>
