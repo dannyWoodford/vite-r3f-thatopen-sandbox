@@ -1,5 +1,5 @@
 import * as OBC from '@thatopen/components'
-import { useControls } from 'leva'
+import { button, useControls } from 'leva'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   BufferAttribute,
@@ -186,11 +186,20 @@ export function InstancedRecreatedElementsRenderer({
   // Example: if 5, only buckets with 6+ instances will be instanced.
   minSimilarInstances?: number
 }) {
-  const { uninstancedMaterial } = useControls('ThatOpen', {
+  const [rebuildToken, setRebuildToken] = useState(0)
+
+  const { uninstancedMaterial, threshold } = useControls('ThatOpen', {
+    threshold: {
+      value: minSimilarInstances,
+      min: 1,
+      max: 50,
+      step: 1,
+    },
     uninstancedMaterial: {
       value: 'original' as 'original' | 'red',
       options: { original: 'original', red: 'red' },
     },
+    regenerate: button(() => setRebuildToken((t) => t + 1)),
   })
 
   const batchSize = 200
@@ -316,14 +325,14 @@ export function InstancedRecreatedElementsRenderer({
     return () => {
       cancelled = true
     }
-  }, [batchSize, fragments])
+  }, [batchSize, fragments, rebuildToken])
 
   const buckets = build?.buckets ?? []
   if (buckets.length === 0) return null
 
-  const threshold = Number.isFinite(minSimilarInstances) ? Math.max(1, Math.floor(minSimilarInstances)) : 1
-  const instancedBuckets = buckets.filter((b) => b.matrices.length > threshold)
-  const uninstancedBuckets = buckets.filter((b) => b.matrices.length <= threshold)
+  const t = Number.isFinite(threshold) ? Math.max(1, Math.floor(threshold)) : 1
+  const instancedBuckets = buckets.filter((b) => b.matrices.length > t)
+  const uninstancedBuckets = buckets.filter((b) => b.matrices.length <= t)
 
   return (
     <group name='instanced-recreated-root'>
