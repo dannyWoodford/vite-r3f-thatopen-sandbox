@@ -10,7 +10,6 @@ import {
   InstancedMesh,
   Matrix4,
   MeshLambertMaterial,
-  MeshNormalMaterial
 } from 'three'
 import { getGeometryKeyFromMeshData, getMaterialKeyFromMeshData } from './instancingKeys'
 import { toMatrix4 } from './toMatrix4'
@@ -145,8 +144,8 @@ function UninstancedBucketMeshes({
 }) {
   const redMaterial = useMemo(
     () =>
-      new MeshNormalMaterial({
-        // color: 0xff0000,
+      new MeshLambertMaterial({
+        color: 0xff0000,
         side: DoubleSide,
         polygonOffset: true,
         polygonOffsetUnits: 1,
