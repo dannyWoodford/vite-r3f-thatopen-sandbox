@@ -13,6 +13,11 @@ import {
 } from 'three'
 import { toMatrix4 } from './toMatrix4'
 
+type Disposables = {
+  geometries: BufferGeometry[]
+  materials: MeshLambertMaterial[]
+}
+
 type Part = {
   key: string
   modelId: string
@@ -20,6 +25,79 @@ type Part = {
   geometry: BufferGeometry
   material: MeshLambertMaterial
   matrix: Matrix4
+}
+
+// Fragments "RawMaterial" color channels can arrive as 0..255 or 0..1.
+// THREE.Color expects 0..1, so normalize aggressively to avoid "all white" clamping.
+function normalize01(v: unknown) {
+  if (typeof v !== 'number' || Number.isNaN(v)) return 1
+  // RawMaterial sometimes comes in 0..255 (not 0..1). THREE.Color expects 0..1.
+  if (v > 1) return v / 255
+  return v
+}
+
+// Material resolver used during rebuild:
+// - creates visible, simple Lambert materials from Fragments' RawMaterial
+// - caches per materialId so thousands of parts can share a few materials
+// - registers every created material in `disposables` for cleanup on rebuild/unmount
+function createLambertMaterialResolver(disposables: Disposables) {
+  const materialCache = new Map<number, MeshLambertMaterial>()
+  // Fallback for parts that don't have sample/material info.
+  const fallbackMaterial = new MeshLambertMaterial({ color: 0xffffff, side: DoubleSide })
+  disposables.materials.push(fallbackMaterial)
+
+  const getOrCreate = (materialId: number, raw: any) => {
+    const cached = materialCache.get(materialId)
+    if (cached) return cached
+
+    const mat = new MeshLambertMaterial({
+      color: new Color(normalize01(raw?.r), normalize01(raw?.g), normalize01(raw?.b)),
+      transparent: typeof raw?.a === 'number' ? normalize01(raw.a) < 1 : false,
+      opacity: typeof raw?.a === 'number' ? normalize01(raw.a) : 1,
+      side: DoubleSide,
+      polygonOffset: true,
+      polygonOffsetUnits: 1,
+      polygonOffsetFactor: Math.random(),
+    })
+    materialCache.set(materialId, mat)
+    disposables.materials.push(mat)
+    return mat
+  }
+
+  const resolveForMeshData = (meshData: any, allSamples: any, allRawMaterials: any) => {
+    const sampleId = meshData?.sampleId
+    if (typeof sampleId !== 'number') return fallbackMaterial
+
+    const sample = allSamples?.get(sampleId)
+    const materialId = sample?.material
+    if (typeof materialId !== 'number') return fallbackMaterial
+
+    const rawMaterial = allRawMaterials?.get(materialId)
+    return getOrCreate(materialId, rawMaterial)
+  }
+
+  return { fallbackMaterial, resolveForMeshData }
+}
+
+// Build CPU-side BufferGeometry for a single Fragments MeshData part.
+// Returns null for empty parts. Every created geometry is registered in `disposables`.
+function buildGeometryFromMeshData(meshData: any, disposables: Disposables): BufferGeometry | null {
+  if (!meshData?.positions || meshData.positions.length === 0) return null
+
+  const geometry = new BufferGeometry()
+  disposables.geometries.push(geometry)
+
+  const positions =
+    meshData.positions instanceof Float64Array ? new Float32Array(meshData.positions) : meshData.positions
+  geometry.setAttribute('position', new Float32BufferAttribute(positions as any, 3))
+
+  if (meshData.indices && meshData.indices.length > 0) {
+    geometry.setIndex(new BufferAttribute(meshData.indices as any, 1))
+  }
+
+  geometry.computeBoundingSphere()
+  geometry.computeVertexNormals()
+  return geometry
 }
 
 export function DeclarativeRecreatedElementsRenderer({
@@ -31,13 +109,25 @@ export function DeclarativeRecreatedElementsRenderer({
     batchSize: { value: 200, min: 50, max: 2000, step: 50 },
   })
 
-  const [parts, setParts] = useState<Part[]>([])
+  // `build` owns *both*:
+  // - the list of parts we render (React data)
+  // - all GPU resources created for that list (geometries/materials), so we can dispose safely
+  const [build, setBuild] = useState<{ parts: Part[]; disposables: Disposables } | null>(null)
   const [selected, setSelected] = useState<{ modelId: string; localId: number } | null>(null)
 
-  const disposablesRef = useRef<{
-    geometries: BufferGeometry[]
-    materials: MeshLambertMaterial[]
-  } | null>(null)
+  // Track latest build for unmount cleanup without re-subscribing effects.
+  const buildRef = useRef(build)
+  buildRef.current = build
+
+  useEffect(() => {
+    // On unmount, dispose any remaining GPU resources from the last build.
+    return () => {
+      const b = buildRef.current
+      if (!b) return
+      for (const g of b.disposables.geometries) g.dispose()
+      for (const m of b.disposables.materials) m.dispose()
+    }
+  }, [])
 
   useEffect(() => {
     if (!fragments) return
@@ -45,44 +135,21 @@ export function DeclarativeRecreatedElementsRenderer({
 
     let cancelled = false
     setSelected(null)
-    setParts([])
-
-    const geometries: BufferGeometry[] = []
-    const materialsToDispose: MeshLambertMaterial[] = []
-
-    const materialCache = new Map<number, MeshLambertMaterial>()
-    const fallbackMaterial = new MeshLambertMaterial({ color: 0xffffff, side: DoubleSide })
-    materialsToDispose.push(fallbackMaterial)
-
-    const normalize01 = (v: any) => {
-      if (typeof v !== 'number' || Number.isNaN(v)) return 1
-      if (v > 1) return v / 255
-      return v
-    }
-
-    const getOrCreateMaterial = (materialId: number, raw: any) => {
-      const cached = materialCache.get(materialId)
-      if (cached) return cached
-      const mat = new MeshLambertMaterial({
-        color: new Color(normalize01(raw?.r), normalize01(raw?.g), normalize01(raw?.b)),
-        transparent: typeof raw?.a === 'number' ? normalize01(raw.a) < 1 : false,
-        opacity: typeof raw?.a === 'number' ? normalize01(raw.a) : 1,
-        side: DoubleSide,
-        polygonOffset: true,
-        polygonOffsetUnits: 1,
-        polygonOffsetFactor: Math.random(),
-      })
-      materialCache.set(materialId, mat)
-      materialsToDispose.push(mat)
-      return mat
-    }
+    // Clear current build while a new rebuild is in progress (keeps this mode "all-or-nothing").
+    setBuild(null)
 
     const run = async () => {
+      const disposables: Disposables = { geometries: [], materials: [] }
+      const materialResolver = createLambertMaterialResolver(disposables)
       const nextParts: Part[] = []
 
+      // Rebuild declaratively: produce a flat list of <mesh> parts.
+      // This intentionally differs from `RecreatedElementsRenderer` (imperative Group mutation)
+      // to compare performance / ergonomics of "React-owned meshes".
       for (const [modelId, model] of fragments.list) {
         if (cancelled) return
 
+        // Pull sample/material maps once per model. (We do NOT refetch per batch.)
         const allSamples = await model.getSamples()
         if (cancelled) return
         const allRawMaterials = await model.getMaterials()
@@ -94,6 +161,7 @@ export function DeclarativeRecreatedElementsRenderer({
         // eslint-disable-next-line no-console
         console.log(`[declarative-recreate] ${modelId}: rebuilding ${allIds.length} elements`)
 
+        // `batchSize` bounds the amount of geometry we request per async call to Fragments.
         for (let start = 0; start < allIds.length; start += batchSize) {
           if (cancelled) return
           const chunk = allIds.slice(start, start + batchSize)
@@ -101,62 +169,17 @@ export function DeclarativeRecreatedElementsRenderer({
           const meshesById = await model.getItemsGeometry(chunk, 0 as any)
           if (cancelled) return
 
-          // Collect sampleIds used by this batch.
-          const sampleIdSet = new Set<number>()
-          for (const partsArr of meshesById ?? []) {
-            for (const md of partsArr as any[]) {
-              if (typeof md?.sampleId === 'number') sampleIdSet.add(md.sampleId)
-            }
-          }
-
-          const samples =
-            sampleIdSet.size > 0 ? await model.getSamples(Array.from(sampleIdSet)) : new Map()
-          if (cancelled) return
-
-          const materialIdSet = new Set<number>()
-          for (const [, sample] of samples as any) {
-            const matId = (sample as any)?.material
-            if (typeof matId === 'number') materialIdSet.add(matId)
-          }
-
-          const rawMaterials =
-            materialIdSet.size > 0 ? await model.getMaterials(Array.from(materialIdSet)) : new Map()
-          if (cancelled) return
-
           for (let i = 0; i < chunk.length; i++) {
             const localId = chunk[i]
             const elemParts = meshesById?.[i] ?? []
             if (!elemParts.length) continue
 
+            // Multiple parts can belong to the same element; we keep a stable-ish key per part.
             let partIndex = 0
             for (const md of elemParts as any[]) {
-              if (!md.positions || md.positions.length === 0) continue
-
-              const geometry = new BufferGeometry()
-              geometries.push(geometry)
-
-              const positions =
-                md.positions instanceof Float64Array ? new Float32Array(md.positions) : md.positions
-              geometry.setAttribute('position', new Float32BufferAttribute(positions as any, 3))
-
-              if (md.indices && md.indices.length > 0) {
-                geometry.setIndex(new BufferAttribute(md.indices as any, 1))
-              }
-
-              geometry.computeBoundingSphere()
-              geometry.computeVertexNormals()
-
-              let mat = fallbackMaterial
-              const sampleId = md.sampleId
-              if (typeof sampleId === 'number') {
-                const sample = (allSamples as any).get(sampleId) ?? (samples as any).get(sampleId)
-                const matId = sample?.material
-                if (typeof matId === 'number') {
-                  const raw = (allRawMaterials as any).get(matId) ?? (rawMaterials as any).get(matId)
-                  mat = getOrCreateMaterial(matId, raw)
-                }
-              }
-
+              const geometry = buildGeometryFromMeshData(md, disposables)
+              if (!geometry) continue
+              const mat = materialResolver.resolveForMeshData(md, allSamples, allRawMaterials)
               const matrix = toMatrix4(md.transform)
               nextParts.push({
                 key: `part:${modelId}:${localId}:${partIndex++}`,
@@ -171,8 +194,22 @@ export function DeclarativeRecreatedElementsRenderer({
         }
       }
 
-      disposablesRef.current = { geometries, materials: materialsToDispose }
-      setParts(nextParts)
+      if (cancelled) {
+        // If the component re-renders/unmounts mid-build, clean up the work-in-progress resources.
+        for (const g of disposables.geometries) g.dispose()
+        for (const m of disposables.materials) m.dispose()
+        return
+      }
+
+      // Swap builds.
+      // We dispose the previous build *as we replace it* so we don't leak GPU resources across rebuilds.
+      setBuild((prev) => {
+        if (prev) {
+          for (const g of prev.disposables.geometries) g.dispose()
+          for (const m of prev.disposables.materials) m.dispose()
+        }
+        return { parts: nextParts, disposables }
+      })
 
       // eslint-disable-next-line no-console
       console.log('[declarative-recreate] done', { parts: nextParts.length })
@@ -182,18 +219,11 @@ export function DeclarativeRecreatedElementsRenderer({
 
     return () => {
       cancelled = true
-
-      const d = disposablesRef.current
-      if (d) {
-        for (const g of d.geometries) g.dispose()
-        for (const m of d.materials) m.dispose()
-      }
-      disposablesRef.current = null
-      setParts([])
       setSelected(null)
     }
   }, [batchSize, fragments])
 
+  const parts = build?.parts ?? []
   if (parts.length === 0) return null
 
   return (
@@ -211,10 +241,12 @@ export function DeclarativeRecreatedElementsRenderer({
             matrixAutoUpdate={false}
             name={part.key}
             onPointerDown={(e) => {
+              // Declarative mode uses normal per-mesh events (no click-catcher).
               e.stopPropagation()
               setSelected({ modelId: part.modelId, localId: part.localId })
             }}
           >
+            {/* Self-contained selection feedback */}
             {isSelected && <Outlines thickness={0.02} color='white' screenspace angle={0} />}
           </mesh>
         )
