@@ -1,22 +1,24 @@
 import { useControls } from 'leva'
 import { FragmentsRenderer } from './thatopen/FragmentsRenderer'
 import { DeclarativeRecreatedElementsRenderer } from './thatopen/DeclarativeRecreatedElementsRenderer'
+import { InstancedRecreatedElementsRenderer } from './thatopen/InstancedRecreatedElementsRenderer'
 import { RecreatedElementsRenderer } from './thatopen/RecreatedElementsRenderer'
 import { useThatOpenFragments } from './thatopen/useThatOpenFragments'
 
 const FRAGMENT_URL =
   'https://thatopen.github.io/engine_components/resources/frags/school_arq.frag'
 
-type RenderMode = 'fragments' | 'recreated' | 'declarativeRecreated'
+type RenderMode = 'fragments' | 'recreated' | 'declarativeRecreated' | 'instancedRecreated'
 
 export function ThatOpenFragment() {
   const { mode } = useControls('ThatOpen', {
     mode: {
-      value: 'declarativeRecreated' as RenderMode,
+      value: 'instancedRecreated' as RenderMode,
       options: {
         fragments: 'fragments',
         recreated: 'recreated',
         declarativeRecreated: 'declarativeRecreated',
+        instancedRecreated: 'instancedRecreated',
       },
     },
   })
@@ -35,6 +37,9 @@ export function ThatOpenFragment() {
       {mode === 'recreated' && <RecreatedElementsRenderer fragments={stateRef.current?.fragments ?? null} />}
       {mode === 'declarativeRecreated' && (
         <DeclarativeRecreatedElementsRenderer fragments={stateRef.current?.fragments ?? null} />
+      )}
+      {mode === 'instancedRecreated' && (
+        <InstancedRecreatedElementsRenderer fragments={stateRef.current?.fragments ?? null} />
       )}
     </>
   )
