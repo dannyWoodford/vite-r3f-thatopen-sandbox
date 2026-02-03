@@ -11,6 +11,7 @@ import {
   Matrix4,
   MeshLambertMaterial,
 } from 'three'
+import { getGeometryKeyFromMeshData, getMaterialKeyFromMeshData } from './instancingKeys'
 import { toMatrix4 } from './toMatrix4'
 
 type Disposables = {
@@ -143,6 +144,11 @@ export function DeclarativeRecreatedElementsRenderer({
       const materialResolver = createLambertMaterialResolver(disposables)
       const nextParts: Part[] = []
 
+      // Instancing audit:
+      // We don't instance yet; we just measure how many repeated (geometryKey + materialKey) buckets exist.
+      const geometryCounts = new Map<string, number>()
+      const bucketCounts = new Map<string, number>()
+
       // Rebuild declaratively: produce a flat list of <mesh> parts.
       // This intentionally differs from `RecreatedElementsRenderer` (imperative Group mutation)
       // to compare performance / ergonomics of "React-owned meshes".
@@ -177,6 +183,12 @@ export function DeclarativeRecreatedElementsRenderer({
             // Multiple parts can belong to the same element; we keep a stable-ish key per part.
             let partIndex = 0
             for (const md of elemParts as any[]) {
+              const geometryKey = getGeometryKeyFromMeshData(md)
+              geometryCounts.set(geometryKey, (geometryCounts.get(geometryKey) ?? 0) + 1)
+              const materialKey = getMaterialKeyFromMeshData(md, allSamples)
+              const bucketKey = `${materialKey}|${geometryKey}`
+              bucketCounts.set(bucketKey, (bucketCounts.get(bucketKey) ?? 0) + 1)
+
               const geometry = buildGeometryFromMeshData(md, disposables)
               if (!geometry) continue
               const mat = materialResolver.resolveForMeshData(md, allSamples, allRawMaterials)
@@ -213,6 +225,18 @@ export function DeclarativeRecreatedElementsRenderer({
 
       // eslint-disable-next-line no-console
       console.log('[declarative-recreate] done', { parts: nextParts.length })
+
+      // eslint-disable-next-line no-console
+      console.log('[instancing-audit]', {
+        parts: nextParts.length,
+        uniqueGeometries: geometryCounts.size,
+        uniqueBuckets_geometryPlusMaterial: bucketCounts.size,
+        // How many parts are in a bucket that repeats (count > 1):
+        repeatedBucketParts: Array.from(bucketCounts.values()).reduce((acc, c) => acc + (c > 1 ? c : 0), 0),
+        topBuckets: Array.from(bucketCounts.entries())
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 15),
+      })
     }
 
     run().catch(console.error)
@@ -243,6 +267,7 @@ export function DeclarativeRecreatedElementsRenderer({
             onPointerDown={(e) => {
               // Declarative mode uses normal per-mesh events (no click-catcher).
               e.stopPropagation()
+              console.log('part', part)
               setSelected({ modelId: part.modelId, localId: part.localId })
             }}
           >

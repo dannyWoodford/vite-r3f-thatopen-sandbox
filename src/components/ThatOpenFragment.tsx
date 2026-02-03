@@ -12,7 +12,7 @@ type RenderMode = 'fragments' | 'recreated' | 'declarativeRecreated'
 export function ThatOpenFragment() {
   const { mode } = useControls('ThatOpen', {
     mode: {
-      value: 'fragments' as RenderMode,
+      value: 'declarativeRecreated' as RenderMode,
       options: {
         fragments: 'fragments',
         recreated: 'recreated',
