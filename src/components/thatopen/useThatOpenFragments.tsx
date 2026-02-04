@@ -11,7 +11,7 @@ import {
   Vector2,
   Vector3,
 } from 'three'
-import { toMatrix4 } from './toMatrix4'
+import { toMatrix4 } from './utils/toMatrix4'
 
 const WORKER_URL = 'https://thatopen.github.io/engine_fragment/resources/worker.mjs'
 

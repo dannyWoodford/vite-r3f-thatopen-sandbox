@@ -11,8 +11,8 @@ import {
   Matrix4,
   MeshLambertMaterial,
 } from 'three'
-import { getGeometryKeyFromMeshData, getMaterialKeyFromMeshData } from './instancingKeys'
-import { toMatrix4 } from './toMatrix4'
+import { getGeometryKeyFromMeshData, getMaterialKeyFromMeshData } from './utils/instancingKeys'
+import { toMatrix4 } from './utils/toMatrix4'
 
 type Disposables = {
   geometries: BufferGeometry[]

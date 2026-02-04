@@ -14,7 +14,7 @@ import {
   Mesh as ThreeMesh,
   Vector3,
 } from 'three'
-import { toMatrix4 } from './toMatrix4'
+import { toMatrix4 } from './utils/toMatrix4'
 
 export function RecreatedElementsRenderer({
   fragments,
